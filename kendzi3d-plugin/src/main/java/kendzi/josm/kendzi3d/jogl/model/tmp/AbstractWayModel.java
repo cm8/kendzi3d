@@ -29,6 +29,10 @@ public abstract class AbstractWayModel extends AbstractModel {
     public AbstractWayModel(Way way, Perspective perspective) {
         super(perspective);
 
+        if (way == null) {
+            return;
+        }
+
         calcModelCenter(way);
 
         calcWayPointsAndRadius(way);

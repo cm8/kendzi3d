@@ -47,11 +47,20 @@ public class RoadLayer implements Layer {
 
     private Match roadMatcher;
 
+    private Match roadRelationMatcher;
+
     {
         try {
             roadMatcher = SearchCompiler.compile("(highway=*)");
         } catch (SearchParseError e) {
             roadMatcher = new SearchCompiler.Never();
+            log.error(e, e);
+        }
+        try {
+            roadRelationMatcher = SearchCompiler
+                    .compile("type=multipolygon && (highway=*)");
+        } catch (SearchParseError e) {
+            roadRelationMatcher = new SearchCompiler.Never();
             log.error(e, e);
         }
 
@@ -69,7 +78,7 @@ public class RoadLayer implements Layer {
 
     @Override
     public Match getRelationMatcher() {
-        return null;
+        return roadRelationMatcher;
     }
 
     @Override
@@ -89,7 +98,7 @@ public class RoadLayer implements Layer {
 
     @Override
     public WorldObject buildModel(Relation relation, Perspective perspective) {
-        return null;
+        return new Road(relation, perspective, modelRender, metadataCacheService);
     }
 
     /**

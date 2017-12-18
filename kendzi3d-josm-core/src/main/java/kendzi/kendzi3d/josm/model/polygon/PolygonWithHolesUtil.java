@@ -30,6 +30,37 @@ public final class PolygonWithHolesUtil {
         //
     }
 
+    public static List<PolygonWithHolesList2d> getMultiPolygonWithHoles(OsmPrimitive p, Perspective perspective) {
+        if (p instanceof Relation) {
+            return getMultiPolygonWithHolesRelation((Relation) p, perspective);
+        }
+        return getMultiPolygonWithHolesWay((Way) p, perspective);
+    }
+
+    public static List<PolygonWithHolesList2d> getMultiPolygonWithHolesWay(Way way, Perspective perspective) {
+        List<PolygonWithHolesList2d> ret = new ArrayList<PolygonWithHolesList2d>();
+
+        List<Point2d> poly = new ArrayList<Point2d>();
+
+        int size = way.getNodesCount();
+        if (size > 0) {
+            if (way.getNode(0).equals(way.getNode(way.getNodesCount() - 1))) {
+                size--;
+            }
+            for (int i = 0; i < size; i++) {
+                Point2d p = perspective.calcPoint(way.getNode(i));
+                poly.add(p);
+            }
+            ret.add(new PolygonWithHolesList2d(new PolygonList2d(poly), null));
+        }
+        return ret;
+    }
+
+    public static List<PolygonWithHolesList2d> getMultiPolygonWithHolesRelation(Relation pRelation, Perspective perspective) {
+
+        return PolygonWithHolesUtil.findPolygonsWithHoles(pRelation, perspective);
+    }
+
     /**
      * @param pRelation
      * @param pPerspective

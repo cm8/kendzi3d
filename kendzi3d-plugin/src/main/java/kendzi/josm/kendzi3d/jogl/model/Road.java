@@ -6,10 +6,15 @@
 
 package kendzi.josm.kendzi3d.jogl.model;
 
+import java.util.AbstractMap.SimpleEntry;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedList;
 import java.util.List;
-
+import java.util.Objects;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import com.jogamp.opengl.GL2;
 import javax.vecmath.Point2d;
 import javax.vecmath.Point3d;
@@ -20,6 +25,7 @@ import kendzi.jogl.model.factory.FaceFactory;
 import kendzi.jogl.model.factory.FaceFactory.FaceType;
 import kendzi.jogl.model.factory.MaterialFactory;
 import kendzi.jogl.model.factory.MeshFactory;
+import kendzi.jogl.model.factory.MeshFactoryUtil;
 import kendzi.jogl.model.factory.ModelFactory;
 import kendzi.jogl.model.geometry.Model;
 import kendzi.jogl.model.geometry.TextCoord;
@@ -31,9 +37,16 @@ import kendzi.josm.kendzi3d.jogl.model.tmp.AbstractWayModel;
 import kendzi.josm.kendzi3d.service.MetadataCacheService;
 import kendzi.josm.kendzi3d.util.ModelUtil;
 import kendzi.kendzi3d.josm.model.perspective.Perspective;
+import kendzi.kendzi3d.josm.model.polygon.PolygonWithHolesUtil;
+import kendzi.math.geometry.Plane3d;
+import kendzi.math.geometry.Triangle2d;
+import kendzi.math.geometry.polygon.PolygonWithHolesList2d;
+import kendzi.math.geometry.triangulate.Poly2TriSimpleUtil;
 
 import org.apache.log4j.Logger;
 import org.openstreetmap.josm.data.osm.Node;
+import org.openstreetmap.josm.data.osm.OsmPrimitive;
+import org.openstreetmap.josm.data.osm.Relation;
 import org.openstreetmap.josm.data.osm.Way;
 
 /**
@@ -66,6 +79,11 @@ public class Road extends AbstractWayModel {
     private final MetadataCacheService metadataCacheService;
 
     /**
+     * Texture data.
+     */
+    private TextureData textureData;
+
+    /**
      * List of road points.
      */
     private List<Point2d> list = new ArrayList<Point2d>();
@@ -90,23 +108,37 @@ public class Road extends AbstractWayModel {
      */
     private Model model;
 
+    private Relation mp;
+
     /**
      * Represent road.
      *
      * @param way
      *            way
-     * @param perspective
+     * @param pPerspective
      *            perspective
-     * @param modelRender
+     * @param pModelRender
      *            model render
-     * @param metadataCacheService
+     * @param pMetadataCacheService
      *            metadata cache service
      */
-    public Road(Way way, Perspective perspective, ModelRender modelRender, MetadataCacheService metadataCacheService) {
-        super(way, perspective);
+    public Road(Way way, Perspective pPerspective, ModelRender pModelRender, MetadataCacheService pMetadataCacheService) {
 
-        this.modelRender = modelRender;
-        this.metadataCacheService = metadataCacheService;
+        super(way, pPerspective);
+
+        modelRender = pModelRender;
+        metadataCacheService = pMetadataCacheService;
+        textureData = getTexture();
+    }
+
+    public Road(Relation relation, Perspective pPerspective, ModelRender pModelRender, MetadataCacheService pMetadataCacheService) {
+
+        super(null, pPerspective);
+        mp = relation;
+
+        modelRender = pModelRender;
+        metadataCacheService = pMetadataCacheService;
+        textureData = getTexture();
     }
 
     @Override
@@ -114,6 +146,84 @@ public class Road extends AbstractWayModel {
 
         // FIXME object is not in local coordinates!
         setPoint(new Point3d());
+
+        if (mp != null || way.hasAreaTags()) {
+            model = buildArea();
+        } else {
+            model = buildLinear();
+        }
+
+        model.setUseLight(true);
+        model.setUseTexture(true);
+        buildModel = true;
+    }
+
+    private int getMaterial(ModelFactory mf) {
+
+        Material m = MaterialFactory.createTextureMaterial(textureData.getFile());
+
+        return mf.addMaterial(m);
+    }
+
+    private Model buildArea() {
+
+        ModelFactory modelBuilder = ModelFactory.modelBuilder();
+        MeshFactory mesh = modelBuilder.addMesh("road_area");
+
+        mesh.materialID = getMaterial(modelBuilder);
+        mesh.hasTexture = true;
+
+        Vector3d nt = new Vector3d(0, 1, 0);
+
+        Point3d planeRightTopPoint = new Point3d(0, 0.05, 0);
+
+        List<PolygonWithHolesList2d> polyList = PolygonWithHolesUtil.getMultiPolygonWithHoles(way != null ? way : mp, perspective);
+
+        for (PolygonWithHolesList2d poly : polyList) {
+
+            List<Triangle2d> triangles = Poly2TriSimpleUtil.triangulate(poly);
+
+            Plane3d planeTop = new Plane3d(planeRightTopPoint, nt);
+
+            Vector3d roofTopLineVector = new Vector3d(-1, 0, 0);
+
+            MeshFactoryUtil.addPolygonToRoofMesh(mesh, triangles, planeTop, roofTopLineVector,
+                    new kendzi.jogl.texture.dto.TextureData(textureData.getFile(), 1d, 1d),
+                    0d, 0d);
+        }
+
+        return modelBuilder.toModel();
+    }
+
+    private Model buildLinear() {
+
+        boolean highway_links_join = false;
+        int oneway = way.isOneway();
+        if (oneway != 0) {
+            final List<OsmPrimitive> links = new ArrayList<>();
+
+            Node join_at = Arrays.asList(way.firstNode(), way.lastNode()).stream()
+                    .filter(Objects::nonNull)
+                    .map(n -> {
+                        List<OsmPrimitive> refs = n.getReferrers().stream()
+                                .filter(t -> t instanceof Way && t != way)
+                                .collect(Collectors.toList());
+                        refs.stream().filter(t -> ((Way)t).isOneway() != 0).forEach(e -> links.add(e));
+                        if (links.size() == 1 && ((Way) links.get(0)).isFirstLastNode(n)
+                                && refs.size() - links.size() > 0) {
+                            return n;
+                        } else {
+                            return null;
+                        }
+                    }).filter(Objects::nonNull).findFirst().orElse(null);
+
+            if (join_at != null) {
+                highway_links_join = true;
+                oneway = (way.lastNode() == join_at) ? 1 : -1;
+                oneway *= det(join_at, way.getNeighbours(join_at).iterator().next(),
+                        ((Way) links.get(0)).getNeighbours(join_at).iterator().next()) > 0 ? 1 : -1;
+            }
+        }
 
         List<Point2d> pointList = new ArrayList<Point2d>();
 
@@ -124,21 +234,13 @@ public class Road extends AbstractWayModel {
 
         list = pointList;
 
-        roadWidth = (float) DEFAULT_ROAD_WIDTH;
-
         roadWidth = getRoadWidth();
-
-        TextureData texture = getTexture();
-
-        Material m = MaterialFactory.createTextureMaterial(texture.getFile());
 
         ModelFactory modelBuilder = ModelFactory.modelBuilder();
 
-        int mi = modelBuilder.addMaterial(m);
-
         MeshFactory meshWalls = modelBuilder.addMesh("road");
 
-        meshWalls.materialID = mi;
+        meshWalls.materialID = getMaterial(modelBuilder);
         meshWalls.hasTexture = true;
 
         if (list.size() > 1) {
@@ -174,14 +276,27 @@ public class Road extends AbstractWayModel {
                 double borderX = normX + 0.2 * orthX / mod;
                 double borderY = normY + 0.2 * orthY / mod;
 
-                double uEnd = distance / texture.getLenght();
+                double uEnd = distance / textureData.getLenght();
+
+                double offX = 0;
+                double offY = 0;
+                double vStart = 0.00001d;
+
+                if (highway_links_join) {
+                    offX = oneway * (normX + borderX) / 2;
+                    offY = oneway * (normY + borderY) / 2;
+                }
+
+                if (getKV("lanes") != null && getKV("lanes").equals("lanes_1")) {
+                    vStart += 0.5;
+                }
 
                 // left border
                 int tcb1 = meshWalls.addTextCoord(new TextCoord(0, 0.99999d));
                 // left part of road
                 int tcb2 = meshWalls.addTextCoord(new TextCoord(0, 1 - 0.10d));
                 // Middle part of road
-                int tcb3 = meshWalls.addTextCoord(new TextCoord(0, 0.00001d));
+                int tcb3 = meshWalls.addTextCoord(new TextCoord(0, vStart));
                 // right part of road
                 int tcb4 = meshWalls.addTextCoord(new TextCoord(0, 1 - 0.10d));
                 // right border
@@ -192,33 +307,33 @@ public class Road extends AbstractWayModel {
                 // left part of road
                 int tce2 = meshWalls.addTextCoord(new TextCoord(uEnd, 1 - 0.10d));
                 // Middle part of road
-                int tce3 = meshWalls.addTextCoord(new TextCoord(uEnd, 0.00001d));
+                int tce3 = meshWalls.addTextCoord(new TextCoord(uEnd, vStart));
                 // right part of road
                 int tce4 = meshWalls.addTextCoord(new TextCoord(uEnd, 1 - 0.10d));
                 // right border
                 int tce5 = meshWalls.addTextCoord(new TextCoord(uEnd, 0.99999d));
 
                 // left border
-                int wbi1 = meshWalls.addVertex(new Point3d(beginPoint.x + borderX, 0.0d, -(beginPoint.y + borderY)));
+                int wbi1 = meshWalls.addVertex(new Point3d(beginPoint.x + borderX + offX, 0.0d, -(beginPoint.y + borderY + offY)));
                 // left part of road
-                int wbi2 = meshWalls.addVertex(new Point3d(beginPoint.x + normX, 0.1d, -(beginPoint.y + normY)));
+                int wbi2 = meshWalls.addVertex(new Point3d(beginPoint.x + normX + offX, 0.1d, -(beginPoint.y + normY + offY)));
                 // middle part of road
-                int wbi3 = meshWalls.addVertex(new Point3d(beginPoint.x, 0.15d, -beginPoint.y));
+                int wbi3 = meshWalls.addVertex(new Point3d(beginPoint.x + offX, 0.15d, -(beginPoint.y + offY)));
                 // right part of road
-                int wbi4 = meshWalls.addVertex(new Point3d(beginPoint.x - normX, 0.1d, -(beginPoint.y - normY)));
+                int wbi4 = meshWalls.addVertex(new Point3d(beginPoint.x - normX + offX, 0.1d, -(beginPoint.y - normY + offY)));
                 // right border
-                int wbi5 = meshWalls.addVertex(new Point3d(beginPoint.x - borderX, 0.0d, -(beginPoint.y - borderY)));
+                int wbi5 = meshWalls.addVertex(new Point3d(beginPoint.x - borderX + offX, 0.0d, -(beginPoint.y - borderY + offY)));
 
                 // left border
-                int wei1 = meshWalls.addVertex(new Point3d(endPoint.x + borderX, 0.0d, -(endPoint.y + borderY)));
+                int wei1 = meshWalls.addVertex(new Point3d(endPoint.x + borderX + offX, 0.0d, -(endPoint.y + borderY + offY)));
                 // left part of road
-                int wei2 = meshWalls.addVertex(new Point3d(endPoint.x + normX, 0.1d, -(endPoint.y + normY)));
+                int wei2 = meshWalls.addVertex(new Point3d(endPoint.x + normX + offX, 0.1d, -(endPoint.y + normY + offY)));
                 // middle part of road
-                int wei3 = meshWalls.addVertex(new Point3d(endPoint.x, 0.15d, -endPoint.y));
+                int wei3 = meshWalls.addVertex(new Point3d(endPoint.x + offX, 0.15d, -(endPoint.y + offY)));
                 // right part of road
-                int wei4 = meshWalls.addVertex(new Point3d(endPoint.x - normX, 0.1d, -(endPoint.y - normY)));
+                int wei4 = meshWalls.addVertex(new Point3d(endPoint.x - normX + offX, 0.1d, -(endPoint.y - normY + offY)));
                 // right border
-                int wei5 = meshWalls.addVertex(new Point3d(endPoint.x - borderX, 0.0d, -(endPoint.y - borderY)));
+                int wei5 = meshWalls.addVertex(new Point3d(endPoint.x - borderX + offX, 0.0d, -(endPoint.y - borderY + offY)));
 
                 leftBorder.addVert(wbi1, tcb1, flatNormalI);
                 leftBorder.addVert(wbi2, tcb2, flatNormalI);
@@ -244,11 +359,22 @@ public class Road extends AbstractWayModel {
             }
         }
 
-        model = modelBuilder.toModel();
-        model.setUseLight(true);
-        model.setUseTexture(true);
+        return modelBuilder.toModel();
+    }
 
-        buildModel = true;
+    private String getKV(String k) {
+
+        String v;
+
+        if (k.equals("area")) {
+            v = (mp != null || way.hasAreaTags()) ? "yes" : null;
+        } else if (k.equals("oneway")) {
+            v = (mp == null && way.isOneway() != 0) ? "yes" : null;
+        } else {
+            v = (mp != null ? mp : way).get(k);
+        }
+
+        return (v == null) ? null : k + "_" + v;
     }
 
     /**
@@ -258,48 +384,58 @@ public class Road extends AbstractWayModel {
      */
     private TextureData getTexture() {
 
-        String highway = way.get("highway");
-        if (highway == null) {
-            highway = "unknown";
+        List<String> keys = Arrays.asList("highway", "surface", "lanes", "area")
+                .stream().map(k -> getKV(k)).filter(Objects::nonNull).collect(Collectors.toList());
+
+        List<List<String>> propkeys = keys
+                .stream().collect(LinkedList<List<String>>::new,
+                        (r, kv) -> {
+                            LinkedList<List<String>> c = new LinkedList<>();
+                            r.forEach(ll -> c.add(0, ll));
+                            c.add(new LinkedList<>());
+                            c.stream().forEach(ll -> {
+                                final int depth = ll.size() + 1;
+                                int ni = ll.size(); // assign 0 to generate all possible orderings
+                                int ri = (int) r.stream().filter(t -> t.size() > depth).count();
+                                for (; ni < depth; ni++, ri++) {   // t.size()<= depth (ascending)
+                                    LinkedList<String> n = new LinkedList<>(ll);
+                                    n.add(ni, kv);
+                                    r.add(ri, n);
+                                }
+                            });
+                        }, (r1, r2) -> r1.addAll(r2))
+                .stream().collect(Collectors.toList());
+
+        //propkeys.stream().forEach(pk -> System.out.println(String.join(".", pk)));
+
+        SimpleEntry<String, String> prop_name = IntStream.range(0, keys.size())
+                .mapToObj(tail -> keys.subList(keys.size() - tail, keys.size()))
+                .flatMap(cnv -> propkeys.stream().map(pk -> {
+                    cnv.forEach(kv -> {
+                        if (pk.indexOf(kv) >= 0) {
+                            pk.set(pk.indexOf(kv), kv.replaceFirst("_.*", "_unknown"));
+                        }
+                    });
+                    pk.add(0, "roads");
+                    String p = String.join(".", pk);
+                    String tex = metadataCacheService.getPropertites(p + ".texture.file", null);
+                    if (tex != null) {
+                        return new SimpleEntry<>(p, tex);
+                    }
+                    return null;
+                }))
+                .filter(Objects::nonNull)
+                .findFirst().orElse(new SimpleEntry<>("", null));
+
+        Double length = metadataCacheService.getPropertitesDouble(prop_name.getKey() + ".texture.lenght", 1d);
+        Double width = metadataCacheService.getPropertitesDouble(prop_name.getKey() + ".width", DEFAULT_ROAD_WIDTH);
+        if (!prop_name.getKey().contains("lanes_")) {
+            width = keys.stream().filter(t -> t.startsWith("lanes_"))
+                    .map(t -> Integer.parseInt(t.split("_")[1]))
+                    .filter(t -> t > 0).findFirst().orElse(getKV("oneway") == null ? 2 : 1)
+                    * width / 2;
         }
-
-        String surface = way.get("surface");
-        if (surface == null) {
-            surface = "unknown";
-        }
-
-        String file = null;
-
-        String highwayTexture = metadataCacheService.getPropertites("roads.highway_" + highway + ".texture.file", null);
-        Double highwayTextureLenght = metadataCacheService.getPropertitesDouble("roads.highway_" + highway + ".texture.lenght",
-                1d);
-        String surfaceTexture = metadataCacheService.getPropertites("roads.surface_" + surface + ".texture.file", null);
-        Double surfaceTextureLenght = metadataCacheService.getPropertitesDouble("roads.surface_" + surface + ".texture.lenght",
-                1d);
-
-        double lenght = 1;
-        // finds known texture
-        if (!"unknown".equals(surface) && surfaceTexture != null) {
-            file = surfaceTexture;
-            lenght = surfaceTextureLenght;
-        } else if (!"unknown".equals(highway) && highwayTexture != null) {
-            file = highwayTexture;
-            lenght = highwayTextureLenght;
-        }
-
-        if (file == null) {
-            // finds unknown texture
-            if (surfaceTexture != null) {
-                file = surfaceTexture;
-                lenght = surfaceTextureLenght;
-            } else if (highwayTexture != null) {
-                file = highwayTexture;
-                lenght = highwayTextureLenght;
-            }
-        }
-
-        return new TextureData(file, lenght);
-
+        return new TextureData(prop_name.getValue(), length, width);
     }
 
     /**
@@ -309,13 +445,15 @@ public class Road extends AbstractWayModel {
      *
      */
     private class TextureData {
-        String file;
-        double lenght;
+        final String file;
+        final double lenght;
+        final double width;
 
-        private TextureData(String pFile, double pLenght) {
+        private TextureData(String pFile, double pLenght, double pWidth) {
             super();
             file = pFile;
             lenght = pLenght;
+            width = pWidth;
         }
 
         /**
@@ -326,14 +464,6 @@ public class Road extends AbstractWayModel {
         }
 
         /**
-         * @param pFile
-         *            the file to set
-         */
-        public void setFile(String pFile) {
-            file = pFile;
-        }
-
-        /**
          * @return the lenght
          */
         public double getLenght() {
@@ -341,13 +471,27 @@ public class Road extends AbstractWayModel {
         }
 
         /**
-         * @param pLenght
-         *            the lenght to set
+         * @return the width
          */
-        public void setLenght(double pLenght) {
-            lenght = pLenght;
+        public double getWidth() {
+            return width;
         }
+    }
 
+    /**
+     * @param n1 start node of vector v
+     * @param n2 end node of vector v
+     * @param n3 other node
+     * @return negative value if n3 lies right to the directed line given by v
+     *         positive value if n3 lies left, and zero if n3 lies on the line
+     *
+     * | n1.lat - n3.lat   n1.lon - n3.lon |      n3? (.. positive result)
+     * | n2.lat - n3.lat   n2.lon - n3.lon |  n1 -----> n2
+     *                                         n3?    (.. negative result)
+     */
+    private double det(Node n1, Node n2, Node n3) {
+        return ((n1.lat() - n3.lat()) * (n2.lon() - n3.lon()) -
+                (n1.lon() - n3.lon()) * (n2.lat() - n3.lat()));
     }
 
     /**
@@ -357,24 +501,13 @@ public class Road extends AbstractWayModel {
      */
     private double getRoadWidth() {
 
-        String highway = way.get("highway");
-        if (highway == null) {
-            highway = "unknown";
+        try {
+            return ModelUtil.parseHeight(way.get("width"), textureData.getWidth());
+        } catch (Exception e) {
+            log.error(e, e);
         }
 
-        String widthStr = way.get("width");
-        if (widthStr != null) {
-            try {
-                return ModelUtil.parseHeight(widthStr, DEFAULT_ROAD_WIDTH);
-            } catch (Exception e) {
-                log.error(e, e);
-            }
-        }
-
-        Double paramWidth = metadataCacheService.getPropertitesDouble("roads.highway_" + highway + ".width", DEFAULT_ROAD_WIDTH);
-
-        return paramWidth;
-
+        return DEFAULT_ROAD_WIDTH;
     }
 
     @Override
@@ -384,9 +517,20 @@ public class Road extends AbstractWayModel {
 
     @Override
     public void draw(GL2 pGl, Camera pCamera) {
-        // FIXME object is not in local coordinates!
-        modelRender.render(pGl, model);
+        if (mp == null) {
+            // FIXME object is not in local coordinates!
+            modelRender.render(pGl, model);
+        }
 
+        pGl.glPushMatrix();
+        pGl.glTranslated(getGlobalX(), 0, -getGlobalY());
+
+        try {
+            modelRender.render(pGl, model);
+
+        } finally {
+            pGl.glPopMatrix();
+        }
     }
 
     @Override
@@ -409,4 +553,13 @@ public class Road extends AbstractWayModel {
         return getPoint();
     }
 
+    @Override
+    public void rebuildWorldObject(OsmPrimitive primitive, Perspective perspective) {
+        if (primitive instanceof Relation) {
+            mp = (Relation) primitive;
+            primitive = null;
+        }
+        textureData = getTexture();
+        super.rebuildWorldObject(primitive, perspective);
+    }
 }

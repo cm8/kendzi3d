@@ -6,12 +6,10 @@
 
 package kendzi.josm.kendzi3d.jogl.model;
 
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
 import com.jogamp.opengl.GL2;
-import javax.vecmath.Point2d;
 import javax.vecmath.Point3d;
 import javax.vecmath.Vector3d;
 
@@ -33,15 +31,12 @@ import kendzi.kendzi3d.josm.model.perspective.Perspective;
 import kendzi.kendzi3d.josm.model.polygon.PolygonWithHolesUtil;
 import kendzi.math.geometry.Plane3d;
 import kendzi.math.geometry.Triangle2d;
-import kendzi.math.geometry.polygon.PolygonList2d;
 import kendzi.math.geometry.polygon.PolygonWithHolesList2d;
 import kendzi.math.geometry.triangulate.Poly2TriSimpleUtil;
 
 import org.apache.log4j.Logger;
 import org.openstreetmap.josm.data.osm.Node;
 import org.openstreetmap.josm.data.osm.OsmPrimitive;
-import org.openstreetmap.josm.data.osm.Relation;
-import org.openstreetmap.josm.data.osm.Way;
 
 /**
  * Water model.
@@ -103,37 +98,6 @@ public class Water extends AbstractModel {
         this.primitive = primitive;
     }
 
-    List<PolygonWithHolesList2d> getMultiPolygonWithHoles() {
-        if (primitive instanceof Relation) {
-            return getMultiPolygonWithHolesRelation((Relation) primitive, perspective);
-        }
-        return getMultiPolygonWithHolesWay((Way) primitive, perspective);
-    }
-
-    List<PolygonWithHolesList2d> getMultiPolygonWithHolesWay(Way way, Perspective perspective) {
-        List<PolygonWithHolesList2d> ret = new ArrayList<PolygonWithHolesList2d>();
-
-        List<Point2d> poly = new ArrayList<Point2d>();
-
-        int size = way.getNodesCount();
-        if (size > 0) {
-            if (way.getNode(0).equals(way.getNode(way.getNodesCount() - 1))) {
-                size--;
-            }
-            for (int i = 0; i < size; i++) {
-                Point2d p = perspective.calcPoint(way.getNode(i));
-                poly.add(p);
-            }
-            ret.add(new PolygonWithHolesList2d(new PolygonList2d(poly), null));
-        }
-        return ret;
-    }
-
-    List<PolygonWithHolesList2d> getMultiPolygonWithHolesRelation(Relation pRelation, Perspective perspective) {
-
-        return PolygonWithHolesUtil.findPolygonsWithHoles(pRelation, perspective);
-    }
-
     @Override
     public void buildWorldObject() {
 
@@ -153,7 +117,7 @@ public class Water extends AbstractModel {
 
         Point3d planeRightTopPoint = new Point3d(0, 0.05, 0);
 
-        List<PolygonWithHolesList2d> polyList = getMultiPolygonWithHoles();
+        List<PolygonWithHolesList2d> polyList = PolygonWithHolesUtil.getMultiPolygonWithHoles(primitive, perspective);
 
         for (PolygonWithHolesList2d poly : polyList) {
 
