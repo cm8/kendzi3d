@@ -10,6 +10,7 @@ import java.util.AbstractMap.SimpleEntry;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Objects;
@@ -195,7 +196,7 @@ public class Road extends AbstractWayModel {
         return modelBuilder.toModel();
     }
 
-    private void buildStrip(MeshFactory mf, Point3d spOut, Point3d spIn, Point3d epOut, Point3d epIn,
+    private void buildStrip(MeshFactory mf, FaceFactory ff, Point3d spOut, Point3d spIn, Point3d epOut, Point3d epIn,
             double uStart, double uEnd, double vOut, double vIn, int nIdx) {
 
         // outward border
@@ -218,7 +219,6 @@ public class Road extends AbstractWayModel {
         // inward border end vertex
         int wei2 = mf.addVertex(new Point3d(epIn));
 
-        FaceFactory ff = mf.addFace(FaceType.QUAD_STRIP);
         ff.addVert(wbi1, tcb1, nIdx);
         ff.addVert(wbi2, tcb2, nIdx);
         ff.addVert(wei1, tce1, nIdx);
@@ -279,6 +279,13 @@ public class Road extends AbstractWayModel {
 
             int flatNormalI = meshWalls.addNormal(flatSurface);
 
+            final List<Double> xbs = new ArrayList<>();
+            final List<Double> zbs = new ArrayList<>();
+            final Point2d offb = new Point2d(0d, 0d);
+            double orthX = 0;
+            double orthY = 0;
+            Double prevAngle = null;
+
             for (int i = 1; i < list.size(); i++) {
                 final Point2d beginPoint = list.get(i - 1);
                 final Point2d endPoint = list.get(i);
@@ -291,8 +298,8 @@ public class Road extends AbstractWayModel {
                 double distance = beginPoint.distance(endPoint);
 
                 // calc orthogonal for road segment
-                double orthX = x * cos90 + y * sin90;
-                double orthY = -x * sin90 + y * cos90;
+                orthX = x * cos90 + y * sin90;
+                orthY = -x * sin90 + y * cos90;
 
                 // calc vector for road width;
                 double normX = roadWidth / 2 * orthX / mod;
@@ -303,12 +310,10 @@ public class Road extends AbstractWayModel {
 
                 double uEnd = distance / textureData.getLenght();
 
-                double offX = 0;
-                double offY = 0;
-
+                final Point2d off = new Point2d(0d, 0d);
                 if (highway_links_join) {
-                    offX = oneway * (normX + borderX) / 2;
-                    offY = oneway * (normY + borderY) / 2;
+                    off.x = oneway * (normX + borderX) / 2;
+                    off.y = oneway * (normY + borderY) / 2;
                 }
 
                 double vStart = 0.00001d;
@@ -317,25 +322,56 @@ public class Road extends AbstractWayModel {
                     vStart += 0.5;
                 }
 
-                List<Double> v = Arrays.asList(0.99999d, 1 - 0.10d, vStart);
-                List<Double> xs = Arrays.asList(borderX + offX, normX + offX, offX);
-                List<Double> ys = Arrays.asList(0d, 0.1d, 0.15d);
-                List<Double> zs = Arrays.asList(borderY + offY, normY + offY, offY);
+                // clamp Points of adjacent segments of this way for smoother appearance
+                // FIXME: should use proper miter join algorithm to maintain exact width
+                double angle = Math.atan2(orthX, orthY);
+                if (angle > Math.PI) {
+                    angle -= 2*Math.PI;
+                }
+                if (angle <= -Math.PI) {
+                    angle += 2*Math.PI;
+                }
+                if (prevAngle != null && Math.abs(angle-prevAngle) > Math.PI / 6d) {
+                    xbs.clear();
+                    zbs.clear();
+                }
+                prevAngle = angle;
 
-                IntStream.concat(IntStream.range(0, v.size()-1), IntStream.iterate(v.size()-1, t -> t-1).limit(v.size()))
+                List<Double> tv = Arrays.asList(0.99999d, 1 - 0.10d, vStart);
+                List<Double> xs = Arrays.asList(borderX, normX, 0d);
+                List<Double> ys = Arrays.asList(0d, 0.1d, 0.15d);
+                List<Double> zs = Arrays.asList(borderY, normY, 0d);
+                HashMap<Integer, FaceFactory> ff = new HashMap<>();
+
+                IntStream.concat(IntStream.range(0, tv.size()-1), IntStream.iterate(tv.size()-1, t -> t-1).limit(tv.size()))
                 .reduce(-1, (r, e) -> {
                     if (r >= 0) {
                         int s = r - e;
-                        Point3d spOutward = new Point3d(beginPoint.x + s * xs.get(r), ys.get(r), -(beginPoint.y + s * zs.get(r)));
-                        Point3d spInward = new Point3d(beginPoint.x + s * xs.get(e), ys.get(e), -(beginPoint.y + s * zs.get(e)));
+                        Point3d spOutward = new Point3d(
+                                +(beginPoint.x + s * (xbs.isEmpty() ? xs : xbs).get(r) + (xbs.isEmpty() ? off : offb).x), ys.get(r),
+                                -(beginPoint.y + s * (zbs.isEmpty() ? zs : zbs).get(r) + (zbs.isEmpty() ? off : offb).y));
+                        Point3d spInward = new Point3d(
+                                +(beginPoint.x + s * (xbs.isEmpty() ? xs : xbs).get(e) + (xbs.isEmpty() ? off : offb).x), ys.get(e),
+                                -(beginPoint.y + s * (zbs.isEmpty() ? zs : zbs).get(e) + (zbs.isEmpty() ? off : offb).y));
+                        Point3d epOutward = new Point3d(
+                                +(endPoint.x + s * xs.get(r) + off.x), ys.get(r),
+                                -(endPoint.y + s * zs.get(r) + off.y));
+                        Point3d epInward = new Point3d(
+                                +(endPoint.x + s * xs.get(e) + off.x), ys.get(e),
+                                -(endPoint.y + s * zs.get(e) + off.y));
 
-                        Point3d epOutward = new Point3d(endPoint.x + s * xs.get(r), ys.get(r), -(endPoint.y + s * zs.get(r)));
-                        Point3d epInward = new Point3d(endPoint.x + s * xs.get(e), ys.get(e), -(endPoint.y + s * zs.get(e)));
-
-                        buildStrip(meshWalls, spOutward, spInward, epOutward, epInward, 0, uEnd, v.get(r), v.get(e), flatNormalI);
+                        buildStrip(meshWalls, ff.compute(s < 0 ? 0x1000 + e : e,
+                                (k, v) -> (v == null) ? meshWalls.addFace(FaceType.QUAD_STRIP) : v),
+                                spOutward, spInward, epOutward, epInward, 0, uEnd, tv.get(r), tv.get(e), flatNormalI);
                     }
                     return e;
                 });
+
+                xbs.clear();
+                xbs.addAll(xs);
+                zbs.clear();
+                zbs.addAll(zs);
+                offb.set(off.x, off.y);
             }
         }
 
