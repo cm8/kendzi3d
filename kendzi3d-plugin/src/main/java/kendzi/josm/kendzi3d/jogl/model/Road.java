@@ -195,6 +195,36 @@ public class Road extends AbstractWayModel {
         return modelBuilder.toModel();
     }
 
+    private void buildStrip(MeshFactory mf, Point3d spOut, Point3d spIn, Point3d epOut, Point3d epIn,
+            double uStart, double uEnd, double vOut, double vIn, int nIdx) {
+
+        // outward border
+        int tcb1 = mf.addTextCoord(new TextCoord(uStart, vOut));
+        // inward border
+        int tcb2 = mf.addTextCoord(new TextCoord(uStart, vIn));
+
+        // outward border
+        int tce1 = mf.addTextCoord(new TextCoord(uEnd, vOut));
+        // inward border
+        int tce2 = mf.addTextCoord(new TextCoord(uEnd, vIn));
+
+        // outward border start vertex
+        int wbi1 = mf.addVertex(new Point3d(spOut));
+        // inward border start vertex
+        int wbi2 = mf.addVertex(new Point3d(spIn));
+
+        // outward border end vertex
+        int wei1 = mf.addVertex(new Point3d(epOut));
+        // inward border end vertex
+        int wei2 = mf.addVertex(new Point3d(epIn));
+
+        FaceFactory ff = mf.addFace(FaceType.QUAD_STRIP);
+        ff.addVert(wbi1, tcb1, nIdx);
+        ff.addVert(wbi2, tcb2, nIdx);
+        ff.addVert(wei1, tce1, nIdx);
+        ff.addVert(wei2, tce2, nIdx);
+    }
+
     private Model buildLinear() {
 
         boolean highway_links_join = false;
@@ -245,18 +275,13 @@ public class Road extends AbstractWayModel {
 
         if (list.size() > 1) {
 
-            FaceFactory leftBorder = meshWalls.addFace(FaceType.QUAD_STRIP);
-            FaceFactory leftPart = meshWalls.addFace(FaceType.QUAD_STRIP);
-            FaceFactory rightBorder = meshWalls.addFace(FaceType.QUAD_STRIP);
-            FaceFactory rightPart = meshWalls.addFace(FaceType.QUAD_STRIP);
-
             Vector3d flatSurface = new Vector3d(0, 1, 0);
 
             int flatNormalI = meshWalls.addNormal(flatSurface);
 
-            Point2d beginPoint = list.get(0);
             for (int i = 1; i < list.size(); i++) {
-                Point2d endPoint = list.get(i);
+                final Point2d beginPoint = list.get(i - 1);
+                final Point2d endPoint = list.get(i);
 
                 double x = endPoint.x - beginPoint.x;
                 double y = endPoint.y - beginPoint.y;
@@ -280,82 +305,37 @@ public class Road extends AbstractWayModel {
 
                 double offX = 0;
                 double offY = 0;
-                double vStart = 0.00001d;
 
                 if (highway_links_join) {
                     offX = oneway * (normX + borderX) / 2;
                     offY = oneway * (normY + borderY) / 2;
                 }
 
+                double vStart = 0.00001d;
+
                 if (getKV("lanes") != null && getKV("lanes").equals("lanes_1")) {
                     vStart += 0.5;
                 }
 
-                // left border
-                int tcb1 = meshWalls.addTextCoord(new TextCoord(0, 0.99999d));
-                // left part of road
-                int tcb2 = meshWalls.addTextCoord(new TextCoord(0, 1 - 0.10d));
-                // Middle part of road
-                int tcb3 = meshWalls.addTextCoord(new TextCoord(0, vStart));
-                // right part of road
-                int tcb4 = meshWalls.addTextCoord(new TextCoord(0, 1 - 0.10d));
-                // right border
-                int tcb5 = meshWalls.addTextCoord(new TextCoord(0, 0.99999d));
+                List<Double> v = Arrays.asList(0.99999d, 1 - 0.10d, vStart);
+                List<Double> xs = Arrays.asList(borderX + offX, normX + offX, offX);
+                List<Double> ys = Arrays.asList(0d, 0.1d, 0.15d);
+                List<Double> zs = Arrays.asList(borderY + offY, normY + offY, offY);
 
-                // left border
-                int tce1 = meshWalls.addTextCoord(new TextCoord(uEnd, 0.99999d));
-                // left part of road
-                int tce2 = meshWalls.addTextCoord(new TextCoord(uEnd, 1 - 0.10d));
-                // Middle part of road
-                int tce3 = meshWalls.addTextCoord(new TextCoord(uEnd, vStart));
-                // right part of road
-                int tce4 = meshWalls.addTextCoord(new TextCoord(uEnd, 1 - 0.10d));
-                // right border
-                int tce5 = meshWalls.addTextCoord(new TextCoord(uEnd, 0.99999d));
+                IntStream.concat(IntStream.range(0, v.size()-1), IntStream.iterate(v.size()-1, t -> t-1).limit(v.size()))
+                .reduce(-1, (r, e) -> {
+                    if (r >= 0) {
+                        int s = r - e;
+                        Point3d spOutward = new Point3d(beginPoint.x + s * xs.get(r), ys.get(r), -(beginPoint.y + s * zs.get(r)));
+                        Point3d spInward = new Point3d(beginPoint.x + s * xs.get(e), ys.get(e), -(beginPoint.y + s * zs.get(e)));
 
-                // left border
-                int wbi1 = meshWalls.addVertex(new Point3d(beginPoint.x + borderX + offX, 0.0d, -(beginPoint.y + borderY + offY)));
-                // left part of road
-                int wbi2 = meshWalls.addVertex(new Point3d(beginPoint.x + normX + offX, 0.1d, -(beginPoint.y + normY + offY)));
-                // middle part of road
-                int wbi3 = meshWalls.addVertex(new Point3d(beginPoint.x + offX, 0.15d, -(beginPoint.y + offY)));
-                // right part of road
-                int wbi4 = meshWalls.addVertex(new Point3d(beginPoint.x - normX + offX, 0.1d, -(beginPoint.y - normY + offY)));
-                // right border
-                int wbi5 = meshWalls.addVertex(new Point3d(beginPoint.x - borderX + offX, 0.0d, -(beginPoint.y - borderY + offY)));
+                        Point3d epOutward = new Point3d(endPoint.x + s * xs.get(r), ys.get(r), -(endPoint.y + s * zs.get(r)));
+                        Point3d epInward = new Point3d(endPoint.x + s * xs.get(e), ys.get(e), -(endPoint.y + s * zs.get(e)));
 
-                // left border
-                int wei1 = meshWalls.addVertex(new Point3d(endPoint.x + borderX + offX, 0.0d, -(endPoint.y + borderY + offY)));
-                // left part of road
-                int wei2 = meshWalls.addVertex(new Point3d(endPoint.x + normX + offX, 0.1d, -(endPoint.y + normY + offY)));
-                // middle part of road
-                int wei3 = meshWalls.addVertex(new Point3d(endPoint.x + offX, 0.15d, -(endPoint.y + offY)));
-                // right part of road
-                int wei4 = meshWalls.addVertex(new Point3d(endPoint.x - normX + offX, 0.1d, -(endPoint.y - normY + offY)));
-                // right border
-                int wei5 = meshWalls.addVertex(new Point3d(endPoint.x - borderX + offX, 0.0d, -(endPoint.y - borderY + offY)));
-
-                leftBorder.addVert(wbi1, tcb1, flatNormalI);
-                leftBorder.addVert(wbi2, tcb2, flatNormalI);
-                leftBorder.addVert(wei1, tce1, flatNormalI);
-                leftBorder.addVert(wei2, tce2, flatNormalI);
-
-                leftPart.addVert(wbi2, tcb2, flatNormalI);
-                leftPart.addVert(wbi3, tcb3, flatNormalI);
-                leftPart.addVert(wei2, tce2, flatNormalI);
-                leftPart.addVert(wei3, tce3, flatNormalI);
-
-                rightBorder.addVert(wbi3, tcb3, flatNormalI);
-                rightBorder.addVert(wbi4, tcb4, flatNormalI);
-                rightBorder.addVert(wei3, tce3, flatNormalI);
-                rightBorder.addVert(wei4, tce4, flatNormalI);
-
-                rightPart.addVert(wbi4, tcb4, flatNormalI);
-                rightPart.addVert(wbi5, tcb5, flatNormalI);
-                rightPart.addVert(wei4, tce4, flatNormalI);
-                rightPart.addVert(wei5, tce5, flatNormalI);
-
-                beginPoint = endPoint;
+                        buildStrip(meshWalls, spOutward, spInward, epOutward, epInward, 0, uEnd, v.get(r), v.get(e), flatNormalI);
+                    }
+                    return e;
+                });
             }
         }
 
@@ -390,7 +370,7 @@ public class Road extends AbstractWayModel {
         List<List<String>> propkeys = keys
                 .stream().collect(LinkedList<List<String>>::new,
                         (r, kv) -> {
-                            LinkedList<List<String>> c = new LinkedList<>();
+                            List<List<String>> c = new LinkedList<>();
                             r.forEach(ll -> c.add(0, ll));
                             c.add(new LinkedList<>());
                             c.stream().forEach(ll -> {
@@ -398,7 +378,7 @@ public class Road extends AbstractWayModel {
                                 int ni = ll.size(); // assign 0 to generate all possible orderings
                                 int ri = (int) r.stream().filter(t -> t.size() > depth).count();
                                 for (; ni < depth; ni++, ri++) {   // t.size()<= depth (ascending)
-                                    LinkedList<String> n = new LinkedList<>(ll);
+                                    List<String> n = new LinkedList<>(ll);
                                     n.add(ni, kv);
                                     r.add(ri, n);
                                 }
@@ -408,7 +388,7 @@ public class Road extends AbstractWayModel {
 
         //propkeys.stream().forEach(pk -> System.out.println(String.join(".", pk)));
 
-        SimpleEntry<String, String> prop_name = IntStream.range(0, keys.size())
+        SimpleEntry<String, String> propname = IntStream.range(0, keys.size())
                 .mapToObj(tail -> keys.subList(keys.size() - tail, keys.size()))
                 .flatMap(cnv -> propkeys.stream().map(pk -> {
                     cnv.forEach(kv -> {
@@ -427,15 +407,17 @@ public class Road extends AbstractWayModel {
                 .filter(Objects::nonNull)
                 .findFirst().orElse(new SimpleEntry<>("", null));
 
-        Double length = metadataCacheService.getPropertitesDouble(prop_name.getKey() + ".texture.lenght", 1d);
-        Double width = metadataCacheService.getPropertitesDouble(prop_name.getKey() + ".width", DEFAULT_ROAD_WIDTH);
-        if (!prop_name.getKey().contains("lanes_")) {
+        Double length = metadataCacheService.getPropertitesDouble(propname.getKey() + ".texture.lenght", 1d);
+        Double width = metadataCacheService.getPropertitesDouble(propname.getKey() + ".width", DEFAULT_ROAD_WIDTH);
+
+        if (!propname.getKey().contains("lanes_")) {
             width = keys.stream().filter(t -> t.startsWith("lanes_"))
                     .map(t -> Integer.parseInt(t.split("_")[1]))
                     .filter(t -> t > 0).findFirst().orElse(getKV("oneway") == null ? 2 : 1)
                     * width / 2;
         }
-        return new TextureData(prop_name.getValue(), length, width);
+
+        return new TextureData(propname.getValue(), length, width);
     }
 
     /**
