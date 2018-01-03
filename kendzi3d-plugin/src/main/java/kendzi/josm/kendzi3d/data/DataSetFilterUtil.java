@@ -5,7 +5,6 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 
-import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.Node;
 import org.openstreetmap.josm.data.osm.OsmPrimitive;
 import org.openstreetmap.josm.data.osm.OsmPrimitiveType;
@@ -18,15 +17,14 @@ import kendzi.kendzi3d.world.quad.layer.LayerMatcher;
 
 public class DataSetFilterUtil {
 
-    public static Set<OsmId> filter(LayerMatcher layerMatcher, DataSet dataSet, Perspective perspective) {
+    public static Set<OsmId> filter(final LayerMatcher layerMatcher, final Collection<OsmPrimitive> data,
+            final Perspective perspective) {
 
-        if (dataSet == null) {
+        if (data == null) {
             return Collections.emptySet();
         }
 
         Set<OsmId> ret = new HashSet<OsmId>(1000);
-
-        Collection<OsmPrimitive> data = dataSet.allNonDeletedCompletePrimitives();
 
         for (Node node : new SubclassFilteredCollection<OsmPrimitive, Node>(data, Node.class::isInstance)) {
 

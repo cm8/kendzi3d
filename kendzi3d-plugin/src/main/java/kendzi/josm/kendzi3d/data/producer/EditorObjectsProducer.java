@@ -1,9 +1,10 @@
 package kendzi.josm.kendzi3d.data.producer;
 
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import javax.inject.Inject;
 
@@ -17,6 +18,12 @@ import org.openstreetmap.josm.data.osm.Node;
 import org.openstreetmap.josm.data.osm.OsmPrimitive;
 import org.openstreetmap.josm.data.osm.Relation;
 import org.openstreetmap.josm.data.osm.Way;
+import org.openstreetmap.josm.data.osm.event.AbstractDatasetChangedEvent;
+import org.openstreetmap.josm.data.osm.event.PrimitiveFlagsChangedEvent;
+import org.openstreetmap.josm.data.osm.event.PrimitivesAddedEvent;
+import org.openstreetmap.josm.data.osm.event.PrimitivesRemovedEvent;
+import org.openstreetmap.josm.data.osm.event.TagsChangedEvent;
+import org.openstreetmap.josm.data.osm.event.WayNodesChangedEvent;
 import org.openstreetmap.josm.data.projection.Projection;
 import org.openstreetmap.josm.gui.MainApplication;
 
@@ -85,11 +92,6 @@ public class EditorObjectsProducer implements Runnable, DataEventListener {
 
     }
 
-    private DataSet getDataSet(DataEvent event) {
-        // always take the newest data set from JOSM
-        return MainApplication.getLayerManager().getEditDataSet();
-    }
-
     private boolean editDataSetChanged(DataSet dataSet) {
         boolean ret = lastDataSetHashCode != dataSet.hashCode();
         lastDataSetHashCode = dataSet.hashCode();
@@ -101,7 +103,7 @@ public class EditorObjectsProducer implements Runnable, DataEventListener {
         boolean rebuild = false;
         boolean editorObjectsChanged = false;
 
-        final DataSet dataSet = getDataSet(event);
+        final DataSet dataSet = MainApplication.getLayerManager().getEditDataSet();
 
         if (dataSet == null) {
             return;
@@ -130,8 +132,8 @@ public class EditorObjectsProducer implements Runnable, DataEventListener {
             }
 
             Set<OsmId> currentIds = core.getOsmIds(layer);
-            Set<OsmId> filteredIds = DataSetFilterUtil.filter(layer, dataSet, perspective);
-            RebuildStatus status = combine(currentIds, filteredIds);
+            Set<OsmId> filteredIds = DataSetFilterUtil.filter(layer, event.getJosmData(), perspective);
+            RebuildStatus status = combine(currentIds, filteredIds, event.getJosmEvent());
 
             if (!status.isEmpty()) {
                 createNewEditorObjects(dataSet, status.getNewIds(), layer, perspective);
@@ -297,32 +299,37 @@ public class EditorObjectsProducer implements Runnable, DataEventListener {
         return buildModel;
     }
 
-    private RebuildStatus combine(Set<OsmId> currentIds, Set<OsmId> filteredIds) {
+    private RebuildStatus combine(final Set<OsmId> currentIds, final Set<OsmId> filteredIds,
+            final AbstractDatasetChangedEvent e) {
 
-        // Set<OsmId> currentIdsSet = new HashSet<OsmId>(currentIds);
+        Set<OsmId> empty = Collections.<OsmId>emptySet();
+        Set<OsmId> newIds = empty;
+        Set<OsmId> updateIds = empty;
+        Set<OsmId> removeIds = empty;
 
-        Set<OsmId> newIds = new HashSet<OsmId>(filteredIds);
-        Set<OsmId> updateIds = new HashSet<OsmId>(filteredIds.size());
-        Set<OsmId> removeIds = new HashSet<OsmId>(filteredIds.size());
+        if (currentIds.isEmpty()) {
+            newIds = filteredIds;
 
-        // find all ids which are not in filtered set
-        for (OsmId osmId : currentIds) {
-            if (!newIds.contains(osmId)) {
-                removeIds.add(osmId);
-            }
-        }
+        } else {
+            if (e instanceof PrimitivesAddedEvent) {
+                newIds = filteredIds;
 
-        Iterator<OsmId> i = newIds.iterator();
-        while (i.hasNext()) {
-            OsmId newIdCandidate = i.next();
+            } else if (e instanceof PrimitivesRemovedEvent ||
+                    (e instanceof TagsChangedEvent
+                            && filteredIds.isEmpty()) ||
+                    (e instanceof WayNodesChangedEvent
+                            && ((WayNodesChangedEvent) e).getChangedWay().getNodes().isEmpty()) ||
+                    (e instanceof PrimitiveFlagsChangedEvent
+                            && ((PrimitiveFlagsChangedEvent) e).getPrimitives().stream().allMatch(OsmPrimitive::isDeleted))
+                    ) {
+                removeIds = filteredIds;
 
-            if (currentIds.contains(newIdCandidate)) {
-                // id id is in current data we need update it
-                // remove id from new ids set
-                i.remove();
-
-                // add to update set
-                updateIds.add(newIdCandidate);
+            } else {
+                Set<OsmId> upd = filteredIds.stream().filter(currentIds::contains)
+                        .collect(Collectors.toCollection(HashSet<OsmId>::new));
+                newIds = filteredIds.stream().filter(t -> !upd.contains(t))
+                        .collect(Collectors.toCollection(HashSet<OsmId>::new));
+                updateIds = upd;
 
             }
         }

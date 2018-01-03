@@ -50,7 +50,7 @@ public class JosmDataEventSource extends DataSetListenerAdapter implements Selec
                 l.add(new NewDataEvent());
 
             } else {
-                l.add(new UpdateDataEvent());
+                l.add(new UpdateDataEvent(e));
             }
         }
     }
