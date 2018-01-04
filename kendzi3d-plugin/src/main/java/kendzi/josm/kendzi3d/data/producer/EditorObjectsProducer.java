@@ -113,16 +113,15 @@ public class EditorObjectsProducer implements Runnable, DataEventListener {
             event = new NewDataEvent();
         }
 
-        Perspective3D perspective = core.getPerspective3d();
-
         if (center.equals(LatLon.ZERO) || event instanceof NewDataEvent) {
-            Projection proj = Main.getProjection();
-            center = calculateCenter(dataSet, proj);
-            perspective = calculatePerspective(center, proj);
-            core.setPerspective3d(perspective);
-
+            center = calculateCenter(dataSet, Main.getProjection());
+            core.setPerspective3d(calculatePerspective(center, Main.getProjection()));
             rebuild = editorObjectsChanged = true;
         }
+
+        final Perspective3D perspective = core.getPerspective3d();
+        final Collection<OsmPrimitive> josmData = event.getJosmData();
+        final AbstractDatasetChangedEvent josmEvent = event.getJosmEvent();
 
         for (Layer layer : core.getLayers()) {
 
@@ -132,8 +131,8 @@ public class EditorObjectsProducer implements Runnable, DataEventListener {
             }
 
             Set<OsmId> currentIds = core.getOsmIds(layer);
-            Set<OsmId> filteredIds = DataSetFilterUtil.filter(layer, event.getJosmData(), perspective);
-            RebuildStatus status = combine(currentIds, filteredIds, event.getJosmEvent());
+            Set<OsmId> filteredIds = DataSetFilterUtil.filter(layer, josmData, perspective);
+            RebuildStatus status = combine(currentIds, filteredIds, josmEvent);
 
             if (!status.isEmpty()) {
                 createNewEditorObjects(dataSet, status.getNewIds(), layer, perspective);
